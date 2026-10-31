@@ -1,0 +1,14 @@
+{
+  "_note": "UNVERIFIED starter list. Values change between patches. Verify every entry against current patch notes and the FFLogs API before trusting.",
+  "buffs": [
+    {"name": "Technical Finish",  "kind": "damage", "percent": 5},
+    {"name": "Divination",        "kind": "damage", "percent": 6},
+    {"name": "Brotherhood",       "kind": "damage", "percent": 5},
+    {"name": "Embolden",          "kind": "damage", "percent": 5},
+    {"name": "Searing Light",     "kind": "damage", "percent": 5},
+    {"name": "Chain Stratagem",   "kind": "crit",   "percent": 10},
+    {"name": "Battle Litany",     "kind": "crit",   "percent": 10},
+    {"name": "Devilment",         "kind": "crit_and_dh", "percent": 20},
+    {"name": "Battle Voice",      "kind": "dh",     "percent": 20}
+  ]
+}
