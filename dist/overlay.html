@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>DPS overlay</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: transparent; }
+  .box { font: 13px/1.35 "Segoe UI", system-ui, sans-serif; color: #e8e8ee; background: rgba(15,16,22,.78); border-radius: 6px; padding: 6px 8px; min-width: 330px; }
+  .top { display: flex; justify-content: space-between; opacity: .8; font-size: 12px; margin-bottom: 3px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: right; padding: 1px 6px; font-variant-numeric: tabular-nums; }
+  th { font-weight: 600; opacity: .7; cursor: pointer; }
+  th.on, td.on { color: #ffd479; opacity: 1; }
+  .name { text-align: left; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tbody tr:nth-child(odd) { background: rgba(255,255,255,.04); }
+  #status { color: #ff9a9a; }
+</style></head>
+<body><div class="box">
+  <div class="top"><span id="timer">waiting for combat</span><span id="status"></span></div>
+  <table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table>
+</div>
+<script>window.BUFF_TABLE = {"_note":"statusId is the FFXIV status id (FFLogs shows it as 1000000 + statusId). 'verified' entries were confirmed against FFLogs data; 'unverified' ones are from memory and must be checked before use.","verified":[{"statusId":2703,"name":"Searing Light","percent":5,"scope":"party"},{"statusId":3685,"name":"Starry Muse","percent":5,"scope":"party"},{"statusId":1878,"name":"Divination","percent":6,"scope":"party"},{"statusId":3887,"name":"The Balance","percent":6,"scope":"single"},{"statusId":3889,"name":"The Spear","percent":6,"scope":"single"}],"unverified":[{"name":"Technical Finish","percent":5,"scope":"party"},{"name":"Brotherhood","percent":5,"scope":"party"},{"name":"Embolden","percent":5,"scope":"party"},{"name":"Standard Finish","percent":5,"scope":"single"},{"name":"Chain Stratagem","kind":"crit_rate","percent":10,"scope":"party"},{"name":"Battle Litany","kind":"crit_rate","percent":10,"scope":"party"},{"name":"Devilment","kind":"crit_and_dh_rate","percent":20,"scope":"single"},{"name":"Battle Voice","kind":"dh_rate","percent":20,"scope":"party"}]};</script>
+<script>// DPS metric engine: raw DPS, rDPS, aDPS, nDPS, cDPS.
+// Rule reproduced exactly against FFLogs data (see docs/metrics.md).
+// Works in Node (require) and in the browser (window.DpsEngine).
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.DpsEngine = factory();
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+
+  // Split one hit's buff-given extra damage between the buffs that caused it.
+  // `buffs` must only hold damage buffs given by OTHER players: [{mult, giver, single, ...}].
+  // Returns the same objects plus `share` (damage credited to that buff).
+  function splitHit(amount, buffs) {
+    if (buffs.length === 0) return [];
+    let M = 1;
+    for (const b of buffs) M *= b.mult; // all multipliers combine by multiplication
+    const pool = amount * (1 - 1 / M); // total extra damage those buffs added
+    const lnM = Math.log(M);
+    // Each buff gets a logarithmic share of the pool.
+    return buffs.map((b) => ({ ...b, share: (pool * Math.log(b.mult)) / lnM }));
+  }
+
+  class DpsEngine {
+    // table: the parsed data/buffs.json (only its "verified" list is used)
+    constructor(table) {
+      this.buffs = new Map(); // statusId -> {name, mult, single}
+      for (const b of table.verified) {
+        this.buffs.set(b.statusId, { name: b.name, mult: 1 + b.percent / 100, single: b.scope === "single" });
+      }
+      this.players = new Map();
+    }
+
+    _p(id) {
+      if (!this.players.has(id)) this.players.set(id, { raw: 0, taken: 0, given: 0, singleRemoved: 0 });
+      return this.players.get(id);
+    }
+
+    // One damage hit. `source` is the owner player id (pets already mapped to owner).
+    // `active` lists buffs on the hitter: [{statusId, giver}] (giver = player id who applied it).
+    addHit(source, amount, active) {
+      const me = this._p(source);
+      me.raw += amount;
+      const others = [];
+      for (const a of active) {
+        const def = this.buffs.get(a.statusId);
+        // Self buffs, and party buffs you cast on yourself, are ignored by the rule.
+        if (!def || a.giver == null || a.giver === source) continue;
+        others.push({ ...def, giver: a.giver });
+      }
+      for (const s of splitHit(amount, others)) {
+        me.taken += s.share;
+        this._p(s.giver).given += s.share;
+        if (s.single) me.singleRemoved += s.share; // aDPS also removes these
+      }
+    }
+
+    // `seconds` = fight length. Returns everything per second.
+    metrics(player, seconds) {
+      const p = this._p(player);
+      const adps = (p.raw - p.singleRemoved) / seconds;
+      return {
+        raw: p.raw / seconds,
+        rdps: (p.raw - p.taken + p.given) / seconds,
+        ndps: (p.raw - p.taken) / seconds,
+        adps,
+        cdps: adps + p.given / seconds,
+      };
+    }
+
+    totals(player) {
+      return { ...this._p(player) };
+    }
+  }
+
+  return { DpsEngine, splitHit };
+});
+</script>
+<script>// Turns IINACT / OverlayPlugin log lines into input for DpsEngine.
+// Line formats come from the OverlayPlugin LogGuide (cactbot docs).
+// Works in Node (require) and in the browser (window.LogParser).
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory(require("./engine.js"));
+  else root.LogParser = factory(root.DpsEngine);
+})(typeof self !== "undefined" ? self : this, function (engineLib) {
+  "use strict";
+
+  // The game stores damage in a packed 4-byte hex value. Examples from the LogGuide:
+  //   "3D0000"   -> 0x003D0000 -> first two bytes 003D -> 61 damage
+  //   "423F400F" -> third byte is 0x40 ("a lot" of damage) -> bytes D,A,B = 0F 42 3F -> 999999
+  function decodeDamage(hex) {
+    const v = hex.padStart(8, "0"); // always 8 hex chars = 4 bytes: A B C D
+    const A = parseInt(v.slice(0, 2), 16);
+    const B = parseInt(v.slice(2, 4), 16);
+    const C = parseInt(v.slice(4, 6), 16);
+    const D = parseInt(v.slice(6, 8), 16);
+    if (C === 0x40) return (D << 16) | (A << 8) | B; // big hit: D is the top byte
+    return (A << 8) | B;
+  }
+
+  // An ability line has 8 (flags, value) pairs starting at field 8. The low byte of
+  // 'flags' says what kind of effect it is: 0x03 damage, 0x05 blocked, 0x06 parried.
+  function damageOf(fields) {
+    let total = 0;
+    for (let i = 8; i < 24; i += 2) {
+      const kind = parseInt(fields[i], 16) & 0xff;
+      if (kind === 0x03 || kind === 0x05 || kind === 0x06) total += decodeDamage(fields[i + 1]);
+    }
+    return total;
+  }
+
+  class LogParser {
+    // table: parsed data/buffs.json
+    constructor(table) {
+      this.engine = new engineLib.DpsEngine(table);
+      this.status = new Map(); // targetId -> Map(statusId -> giverId)
+      this.names = new Map(); // id -> name
+      this.hits = 0;
+    }
+
+    reset() {
+      this.engine = new engineLib.DpsEngine(this.engineTable());
+      this.hits = 0;
+    }
+    engineTable() {
+      return { verified: [...this.engine.buffs].map(([statusId, b]) => ({ statusId, name: b.name, percent: Math.round((b.mult - 1) * 100), scope: b.single ? "single" : "party" })) };
+    }
+
+    // `f` = the log line already split on "|".
+    ingest(f) {
+      switch (f[0]) {
+        case "21":
+        case "22":
+          return this._ability(f);
+        case "24": // damage-over-time tick
+          return this._dot(f);
+        case "26": // status gained or refreshed
+          return this._statusAdd(f);
+        case "30": // status lost
+          return this._statusRemove(f);
+        case "03": // a combatant appeared: remember its name
+          this.names.set(f[2], f[3]);
+          return;
+        default:
+      }
+    }
+
+    // DoT ticks arrive as ONE total per target, with a single named source. The game does not say
+    // how much each player's DoT contributed, so this is an approximation (FFLogs also estimates it).
+    _dot(f) {
+      if (f[4] !== "DoT") return; // skip healing-over-time
+      const target = f[2];
+      const source = f[17];
+      if (!target.startsWith("4") || !source || !source.startsWith("1")) return;
+      const amount = parseInt(f[6], 16); // the tick amount is plain hex, no packing
+      if (!(amount > 0)) return;
+      const mine = this.status.get(source);
+      const active = mine ? [...mine].map(([statusId, giver]) => ({ statusId, giver })) : [];
+      this.names.set(source, f[18]);
+      this.engine.addHit(source, amount, active);
+      this.hits++;
+    }
+
+    _statusAdd(f) {
+      const statusId = parseInt(f[2], 16);
+      const target = f[7];
+      if (!this.status.has(target)) this.status.set(target, new Map());
+      this.status.get(target).set(statusId, f[5]); // f[5] = who applied it
+      this.names.set(f[5], f[6]);
+      this.names.set(target, f[8]);
+    }
+
+    _statusRemove(f) {
+      const m = this.status.get(f[7]);
+      if (m) m.delete(parseInt(f[2], 16));
+    }
+
+    _ability(f) {
+      const source = f[2];
+      const target = f[6];
+      // Count only damage to enemies (ids starting with 4). Players have ids starting with 1.
+      if (!target.startsWith("4")) return;
+      const amount = damageOf(f);
+      if (amount <= 0) return;
+      // Pets and summons report their owner in field 47; their damage counts for the owner.
+      const ownerId = f[47];
+      const owner = ownerId && ownerId !== "E0000000" && ownerId !== "0" ? ownerId : source;
+      if (!owner.startsWith("1")) return; // not a player's damage
+      this.names.set(source, f[3]);
+      const mine = this.status.get(source) || this.status.get(owner);
+      const active = [];
+      if (mine) {
+        for (const [statusId, giver] of mine) {
+          // a pet's buff giver may itself be a pet; map to its owner is not possible here,
+          // so only keep givers that are players.
+          active.push({ statusId, giver });
+        }
+      }
+      this.engine.addHit(owner, amount, active);
+      this.hits++;
+    }
+  }
+
+  return { LogParser, decodeDamage, damageOf };
+});
+</script>
+<script>// Overlay page: connects to the OverlayPlugin websocket (IINACT), feeds log lines to the
+// parser, and draws a table. Everything is plain DOM, no libraries.
+(function () {
+  "use strict";
+  const params = new URLSearchParams(location.search);
+  const WS_URL = params.get("OVERLAY_WS") || "ws://127.0.0.1:10501/ws";
+  const COLS = [
+    ["raw", "DPS"], ["rdps", "rDPS"], ["adps", "aDPS"], ["ndps", "nDPS"], ["cdps", "cDPS"],
+  ];
+  // ?cols=rdps,adps chooses columns; clicking a header sorts by it.
+  const wanted = (params.get("cols") || "raw,rdps,adps,ndps,cdps").split(",");
+  const cols = COLS.filter(([k]) => wanted.includes(k));
+  let sortKey = params.get("sort") || "rdps";
+
+  let parser = new LogParser.LogParser(window.BUFF_TABLE);
+  let party = null; // Set of player ids, once the game tells us the party
+  let fightStart = null, fightEnd = null, inCombat = false;
+  let lastSeen = 0;
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(1) + "k" : Math.round(n).toString());
+
+  function seconds() {
+    if (fightStart === null) return 0;
+    const end = inCombat ? lastSeen : fightEnd || lastSeen;
+    return Math.max(1, (end - fightStart) / 1000);
+  }
+
+  function render() {
+    const s = seconds();
+    $("timer").textContent = fightStart === null ? "waiting for combat" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+    const rows = [];
+    for (const id of parser.engine.players.keys()) {
+      if (party && !party.has(id)) continue;
+      const m = parser.engine.metrics(id, s || 1);
+      if (m.raw <= 0 && parser.engine.totals(id).given <= 0) continue;
+      rows.push({ id, name: parser.names.get(id) || id, ...m });
+    }
+    rows.sort((a, b) => b[sortKey] - a[sortKey]);
+    $("head").innerHTML = `<th class="name">Player</th>` + cols.map(([k, label]) => `<th data-k="${k}" class="${k === sortKey ? "on" : ""}">${label}</th>`).join("");
+    $("body").innerHTML = rows
+      .map((r) => `<tr><td class="name">${r.name.replace(/</g, "&lt;")}</td>` + cols.map(([k]) => `<td class="${k === sortKey ? "on" : ""}">${fmt(r[k])}</td>`).join("") + "</tr>")
+      .join("");
+  }
+
+  function onLine(f) {
+    if (f[1]) {
+      const t = Date.parse(f[1]);
+      if (!Number.isNaN(t)) lastSeen = t;
+    }
+    if (f[0] === "11") { // party list: count, then ids
+      const n = parseInt(f[2], 10);
+      party = new Set(f.slice(3, 3 + n));
+      return;
+    }
+    if (f[0] === "260") { // combat state: f[3] is "1" while in game combat
+      const now = f[3] === "1";
+      if (now && !inCombat) { parser.reset(); fightStart = lastSeen; fightEnd = null; }
+      if (!now && inCombat) fightEnd = lastSeen;
+      inCombat = now;
+      return;
+    }
+    parser.ingest(f);
+  }
+
+  function connect() {
+    const ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+      $("status").textContent = "";
+      ws.send(JSON.stringify({ call: "subscribe", events: ["LogLine"] }));
+    };
+    ws.onmessage = (m) => {
+      let d;
+      try { d = JSON.parse(m.data); } catch { return; }
+      if (d.type === "LogLine" && Array.isArray(d.line)) onLine(d.line);
+    };
+    ws.onclose = () => {
+      $("status").textContent = "not connected to IINACT, retrying…";
+      setTimeout(connect, 3000);
+    };
+    ws.onerror = () => ws.close();
+  }
+
+  // ?demo=1 shows made-up numbers so you can see the layout without the game.
+  function demo() {
+    const A = "10000001", B = "10000002", C = "10000003";
+    let t = Date.now();
+    const line = (a) => { a[1] = new Date(t).toISOString(); return a; };
+    const ability = (src, dmg) => { const f = new Array(54).fill("0"); Object.assign(f, { 0: "21", 2: src, 3: names[src], 6: "40000001", 7: "Boss", 8: "710003", 9: dmg, 47: "E0000000" }); return line(f); };
+    const status = (id, giver, target) => { const f = new Array(12).fill("0"); Object.assign(f, { 0: "26", 2: id, 3: "S", 5: giver, 6: names[giver], 7: target, 8: names[target] }); return line(f); };
+    const names = { [A]: "Warrior Example", [B]: "Astrologian Example", [C]: "Ninja Example" };
+    onLine(line(["260", "", "1", "1", "1", "1"]));
+    fightStart = t;
+    onLine(status("756", B, A)); // Divination (0x756) from B onto A
+    onLine(status("756", B, C));
+    for (let i = 0; i < 60; i++) {
+      t += 1000;
+      onLine(ability(A, "27BC0000")); onLine(ability(B, "13880000")); onLine(ability(C, "1F400000"));
+      if (i === 40) { onLine(line(["30", "", "756", "S", "0", B, "x", A, "y"])); onLine(line(["30", "", "756", "S", "0", B, "x", C, "y"])); }
+    }
+    render();
+  }
+
+  document.addEventListener("click", (e) => {
+    const k = e.target.dataset && e.target.dataset.k;
+    if (k) { sortKey = k; render(); }
+  });
+  if (params.get("demo")) demo();
+  else connect();
+  setInterval(render, 500);
+  render();
+})();
+</script>
+</body></html>
