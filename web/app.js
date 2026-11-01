@@ -15,15 +15,16 @@
   let parser = new LogParser.LogParser(window.BUFF_TABLE);
   let party = null; // Set of player ids, once the game tells us the party
   let fightStart = null, fightEnd = null, inCombat = false;
-  let lastSeen = 0;
+  let lastSeen = 0, lastHit = null;
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(1) + "k" : Math.round(n).toString());
 
   function seconds() {
     if (fightStart === null) return 0;
-    const end = inCombat ? lastSeen : fightEnd || lastSeen;
-    return Math.max(1, (end - fightStart) / 1000);
+    // While the game says we are in combat, count up to now; otherwise stop at the last hit.
+    const end = inCombat ? lastSeen : lastHit || lastSeen;
+    return Math.max(3, (end - fightStart) / 1000); // never divide by less than 3s: the first hit would look huge
   }
 
   function render() {
@@ -32,7 +33,7 @@
     const rows = [];
     for (const id of parser.engine.players.keys()) {
       if (party && !party.has(id)) continue;
-      const m = parser.engine.metrics(id, s || 1);
+      const m = parser.engine.metrics(id, s || 3);
       if (m.raw <= 0 && parser.engine.totals(id).given <= 0) continue;
       rows.push({ id, name: parser.names.get(id) || id, ...m });
     }
@@ -55,12 +56,20 @@
     }
     if (f[0] === "260") { // combat state: f[3] is "1" while in game combat
       const now = f[3] === "1";
-      if (now && !inCombat) { parser.reset(); fightStart = lastSeen; fightEnd = null; }
-      if (!now && inCombat) fightEnd = lastSeen;
+      if (now && !inCombat) { parser.reset(); fightStart = lastSeen; lastHit = lastSeen; }
       inCombat = now;
       return;
     }
+    // If we joined mid-fight (no combat message seen) or a new pull starts after a quiet gap,
+    // start the clock at the first hit instead of leaving it unset.
+    const isHit = f[0] === "21" || f[0] === "22" || f[0] === "24";
+    if (isHit && lastHit !== null && lastSeen - lastHit > 30000) { parser.reset(); fightStart = null; }
+    const before = parser.hits;
     parser.ingest(f);
+    if (parser.hits > before) {
+      lastHit = lastSeen;
+      if (fightStart === null) fightStart = lastSeen;
+    }
   }
 
   function connect() {
@@ -105,6 +114,7 @@
     const k = e.target.dataset && e.target.dataset.k;
     if (k) { sortKey = k; render(); }
   });
+  window.overlayDebug = { onLine, render }; // handy for tests
   if (params.get("demo")) demo();
   else connect();
   setInterval(render, 500);
