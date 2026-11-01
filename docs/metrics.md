@@ -53,3 +53,34 @@ buffs like Devilment and Standard Finish, which suggests single-target buffs).
 
 Practical meaning for the overlay: if we can compute `taken` and `given` per
 hit, rDPS, nDPS and cDPS fall out. aDPS also needs the buff-subset list.
+
+## Attribution rule, REPRODUCED EXACTLY (2026-11-01)
+
+Tested on report zQBCyHgKaT1Dr3nR fight 21 (8 players, damage buffs from a
+Summoner, Pictomancer and Astrologian). Using FFLogs' own per-hit events, this
+rule reproduces FFLogs' `RDPSTaken` and `RDPSGiven` for ALL 8 players to the
+cent, and the aDPS removal for the 3 players who received cards.
+
+For every damage hit (event type `damage`, pets count toward their owner):
+
+1. Look at the damage buffs on the hitter that were given by OTHER players
+   (not self buffs like No Mercy or Hunter's Instinct, and not a party buff
+   the hitter cast on themselves, such as their own Divination).
+2. M = product of those buffs' multipliers (e.g. 1.05 * 1.06 = 1.113).
+3. Extra damage from them: `pool = amount * (1 - 1/M)`.
+4. Each buff's share: `pool * ln(m_i) / ln(M)`  (a logarithm split).
+5. Hitter's `taken` += the shares. Each buff giver's `given` += their share.
+
+So per hit: `rDPS credit = amount - sum(shares)` for the hitter, and each giver
+gains their share. nDPS = raw - taken; cDPS = aDPS + given (see above).
+
+aDPS: remove, for the hitter, the same shares but ONLY for "single target"
+buffs. In this sample those were the Astrologian cards (The Balance, The
+Spear), 6% each. Self buffs and the other party buffs are NOT removed.
+Still to confirm with other samples: Devilment, Standard Finish, and any other
+single target buffs; crit/direct-hit buffs (Chain Stratagem, Battle Litany,
+Battle Voice) which this sample did not contain.
+
+Buff values confirmed from FFLogs' `multiplier` field: Searing Light 5%,
+Starry Muse 5%, Divination 6%, The Balance 6%, The Spear 6%. (Self buffs seen:
+No Mercy 20%, Hunter's Instinct 10%; they do not enter the calculation.)
