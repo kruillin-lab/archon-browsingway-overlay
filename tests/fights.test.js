@@ -143,6 +143,16 @@ test("an empty party-list log line does not hide everyone", () => {
   assert.strictEqual(rows(), 1);
 });
 
+test("my own hits count when the owner field is 00 (no pet)", () => {
+  const { onLine, onEvent, hits } = loadOverlay();
+  onEvent(soloParty);
+  const mine = (secs) => { const f = ability(secs); f[47] = "00"; return f; };
+  onLine(mine(1));
+  onLine(mine(2));
+  onLine(mine(3));
+  assert.strictEqual(hits(), 3);
+});
+
 test("if nobody is identified yet, nobody is hidden", () => {
   const { onLine, hits } = loadOverlay();
   onLine(ability(1));

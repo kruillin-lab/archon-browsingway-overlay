@@ -31,6 +31,12 @@
     return total;
   }
 
+  // Field 47 names the player who owns a pet or summon. When there is no owner the game writes a
+  // placeholder ("E0000000", "0" or "00"), so only a value that looks like a player id counts.
+  function ownerOf(f) {
+    return f[47] && f[47].startsWith("1") ? f[47] : f[2];
+  }
+
   class LogParser {
     // table: parsed data/buffs.json
     constructor(table) {
@@ -59,7 +65,7 @@
       }
       if (f[0] !== "21" && f[0] !== "22") return null;
       if (!f[6].startsWith("4") || damageOf(f) <= 0) return null;
-      const owner = f[47] && f[47] !== "E0000000" && f[47] !== "0" ? f[47] : f[2];
+      const owner = ownerOf(f);
       return owner.startsWith("1") ? owner : null;
     }
 
@@ -121,8 +127,7 @@
       const amount = damageOf(f);
       if (amount <= 0) { this.seen.noDamage++; return; }
       // Pets and summons report their owner in field 47; their damage counts for the owner.
-      const ownerId = f[47];
-      const owner = ownerId && ownerId !== "E0000000" && ownerId !== "0" ? ownerId : source;
+      const owner = ownerOf(f);
       if (!owner.startsWith("1")) { this.seen.notPlayer++; return; } // not a player's damage
       this.names.set(source, f[3]);
       const mine = this.status.get(source) || this.status.get(owner);
