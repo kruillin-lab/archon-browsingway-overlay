@@ -14,7 +14,8 @@
 
   let parser = new LogParser.LogParser(window.BUFF_TABLE);
   let party = null; // Set of player ids, once the game tells us the party
-  let fightStart = null, fightEnd = null, inCombat = false;
+  let me = null; // my own player id: who counts when there is no party list
+  let fightStart = null;
   let lastSeen = 0, lastHit = null, lastMsg = 0, msgs = 0;
 
   const $ = (id) => document.getElementById(id);
@@ -24,6 +25,14 @@
   // so the clock runs from the first hit to the last hit, plus a short grace while hits are fresh.
   const GRACE_MS = 3000;     // keep counting up for this long after the last hit
   const NEW_FIGHT_MS = 20000; // a hit after this much quiet starts a brand new fight
+  // Only these people's damage appears or times a fight; strangers nearby are ignored.
+  // If we do not know who anyone is yet, hide nobody.
+  function counts(id) {
+    if (party) return party.has(id);
+    return me ? id === me : true;
+  }
+  const toParty = (ids) => (ids.length > 0 ? new Set(ids) : null);
+
   function seconds() {
     if (fightStart === null) return 0;
     const end = lastHit !== null && lastSeen - lastHit > GRACE_MS ? lastHit : lastSeen;
@@ -35,7 +44,7 @@
     $("timer").textContent = fightStart === null ? "waiting for combat" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
     const rows = [];
     for (const id of parser.engine.players.keys()) {
-      if (party && !party.has(id)) continue;
+      if (!counts(id)) continue;
       const m = parser.engine.metrics(id, s || 3);
       if (m.raw <= 0 && parser.engine.totals(id).given <= 0) continue;
       rows.push({ id, name: parser.names.get(id) || id, ...m });
@@ -55,20 +64,16 @@
       if (!Number.isNaN(t)) lastSeen = t;
     }
     if (f[0] === "11") { // party list: count, then ids
-      const n = parseInt(f[2], 10);
-      party = new Set(f.slice(3, 3 + n));
+      party = toParty(f.slice(3, 3 + parseInt(f[2], 10)));
       return;
     }
-    if (f[0] === "260") { // combat state: f[3] is "1" while in game combat
-      const now = f[3] === "1";
-      if (now && !inCombat) { parser.reset(); fightStart = lastSeen; lastHit = lastSeen; }
-      inCombat = now;
-      return;
-    }
-    // If we joined mid-fight (no combat message seen) or a new pull starts after a quiet gap,
-    // start the clock at the first hit instead of leaving it unset. (Also splits pulls when the game's combat signal never drops.)
-    const isHit = f[0] === "21" || f[0] === "22" || f[0] === "24";
-    if (isHit && lastHit !== null && lastSeen - lastHit > NEW_FIGHT_MS) { parser.reset(); fightStart = null; }
+    if (f[0] === "02") { me = f[2]; return; } // the log names my character
+    if (f[0] === "260") return; // game combat flag: it flickers mid-fight and can stick on, so it never splits fights
+    // A new pull starts after a quiet gap: the clock restarts at its first hit.
+    // Only real damage from people who count: a heal, a sprint or a stranger must not wipe the frozen numbers.
+    const source = parser.damageSource(f);
+    if (source && !counts(source)) return;
+    if (source && lastHit !== null && lastSeen - lastHit > NEW_FIGHT_MS) { parser.reset(); fightStart = null; }
     const before = parser.hits;
     parser.ingest(f);
     if (parser.hits > before) {
@@ -77,11 +82,17 @@
     }
   }
 
+  // IINACT sends these as soon as we subscribe, so a page loaded mid-session still knows who is who.
+  function onEvent(d) {
+    if (d.type === "ChangePrimaryPlayer") me = d.charID.toString(16).toUpperCase();
+    if (d.type === "PartyChanged") party = toParty(d.party.filter((p) => p.inParty).map((p) => p.id));
+  }
+
   function connect() {
     const ws = new WebSocket(WS_URL);
     ws.onopen = () => {
       $("status").textContent = "";
-      ws.send(JSON.stringify({ call: "subscribe", events: ["LogLine"] }));
+      ws.send(JSON.stringify({ call: "subscribe", events: ["LogLine", "ChangePrimaryPlayer", "PartyChanged"] }));
     };
     ws.onmessage = (m) => {
       let d;
@@ -89,6 +100,8 @@
       if (d.type === "LogLine" && Array.isArray(d.line)) {
         lastMsg = Date.now(); msgs++;
         try { onLine(d.line); } catch (err) { $("status").textContent = "error: " + err.message; }
+      } else {
+        try { onEvent(d); } catch (err) { $("status").textContent = "error: " + err.message; }
       }
     };
     ws.onclose = () => {
@@ -122,7 +135,7 @@
     const k = e.target.dataset && e.target.dataset.k;
     if (k) { sortKey = k; render(); }
   });
-  window.overlayDebug = { onLine, render }; // handy for tests
+  window.overlayDebug = { onLine, onEvent, render }; // handy for tests
   if (params.get("demo")) demo();
   else connect();
   // Never let one bad frame freeze the table: show the error instead.

@@ -50,6 +50,19 @@
       return { verified: [...this.engine.buffs].map(([statusId, b]) => ({ statusId, name: b.name, percent: Math.round((b.mult - 1) * 100), scope: b.single ? "single" : "party" })) };
     }
 
+    // Whose damage is this line? The player's id, or null if it would not count as damage.
+    // Lets the page decide about a line before it is recorded. Must agree with _ability and _dot.
+    damageSource(f) {
+      if (f[0] === "24") {
+        const counts = f[4] === "DoT" && f[2].startsWith("4") && !!f[17] && f[17].startsWith("1") && parseInt(f[6], 16) > 0;
+        return counts ? f[17] : null;
+      }
+      if (f[0] !== "21" && f[0] !== "22") return null;
+      if (!f[6].startsWith("4") || damageOf(f) <= 0) return null;
+      const owner = f[47] && f[47] !== "E0000000" && f[47] !== "0" ? f[47] : f[2];
+      return owner.startsWith("1") ? owner : null;
+    }
+
     // `f` = the log line already split on "|".
     ingest(f) {
       switch (f[0]) {
