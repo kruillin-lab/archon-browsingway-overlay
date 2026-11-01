@@ -9,6 +9,7 @@ Needs ~/.config/archon-overlay/fflogs.env with FFLOGS_CLIENT_ID and FFLOGS_CLIEN
 Uses only the Python standard library, so nothing to install.
 """
 import base64
+from datetime import datetime, timezone
 import json
 import os
 import sys
@@ -60,6 +61,7 @@ FIGHTS_QUERY = """
 query($code: String!) {
   reportData { report(code: $code) {
     title
+    startTime
     fights { id name kill startTime endTime }
   } }
 }
@@ -84,12 +86,18 @@ def main():
     report = graphql(token, FIGHTS_QUERY, {"code": code})["reportData"]["report"]
     print(f"Report: {report['title']}")
     fights = [f for f in report["fights"] if f["endTime"] > f["startTime"]]
-    for f in fights:
+    for f in (fights if len(sys.argv) < 3 else []):
         secs = (f["endTime"] - f["startTime"]) / 1000
         print(f"  fight {f['id']:>3}  {f['name']:<30} {secs:6.0f}s  kill={f['kill']}")
 
     fight_id = int(sys.argv[2]) if len(sys.argv) > 2 else fights[-1]["id"]
-    print(f"\nUsing fight {fight_id}\n")
+    chosen = next(f for f in fights if f["id"] == fight_id)
+    t0 = report["startTime"]  # report start, milliseconds since 1970 (UTC)
+    def when(ms):
+        return datetime.fromtimestamp((t0 + ms) / 1000, tz=timezone.utc).isoformat()
+    print(f"\nUsing fight {fight_id}: {chosen['name']}")
+    print(f"  starts {when(chosen['startTime'])} UTC")
+    print(f"  ends   {when(chosen['endTime'])} UTC\n")
 
     table = graphql(token, TABLE_QUERY, {"code": code, "fight": fight_id})
     table = table["reportData"]["report"]["table"]["data"]
