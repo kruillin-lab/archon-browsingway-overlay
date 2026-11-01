@@ -15,7 +15,7 @@
   let parser = new LogParser.LogParser(window.BUFF_TABLE);
   let party = null; // Set of player ids, once the game tells us the party
   let fightStart = null, fightEnd = null, inCombat = false;
-  let lastSeen = 0, lastHit = null;
+  let lastSeen = 0, lastHit = null, lastMsg = 0, msgs = 0;
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(1) + "k" : Math.round(n).toString());
@@ -38,7 +38,8 @@
       rows.push({ id, name: parser.names.get(id) || id, ...m });
     }
     rows.sort((a, b) => b[sortKey] - a[sortKey]);
-    $("debug").textContent = `${parser.hits} hits, ${s.toFixed(0)}s`;
+    const ago = lastMsg ? Math.round((Date.now() - lastMsg) / 1000) : "-";
+    $("debug").textContent = `${parser.hits} hits, ${s.toFixed(0)}s, ${msgs} lines, last data ${ago}s ago`;
     $("head").innerHTML = `<th class="name">Player</th>` + cols.map(([k, label]) => `<th data-k="${k}" class="${k === sortKey ? "on" : ""}">${label}</th>`).join("");
     $("body").innerHTML = rows
       .map((r) => `<tr><td class="name">${r.name.replace(/</g, "&lt;")}</td>` + cols.map(([k]) => `<td class="${k === sortKey ? "on" : ""}">${fmt(r[k])}</td>`).join("") + "</tr>")
@@ -82,7 +83,10 @@
     ws.onmessage = (m) => {
       let d;
       try { d = JSON.parse(m.data); } catch { return; }
-      if (d.type === "LogLine" && Array.isArray(d.line)) onLine(d.line);
+      if (d.type === "LogLine" && Array.isArray(d.line)) {
+        lastMsg = Date.now(); msgs++;
+        try { onLine(d.line); } catch (err) { $("status").textContent = "error: " + err.message; }
+      }
     };
     ws.onclose = () => {
       $("status").textContent = "not connected to IINACT, retrying…";
@@ -118,6 +122,7 @@
   window.overlayDebug = { onLine, render }; // handy for tests
   if (params.get("demo")) demo();
   else connect();
-  setInterval(render, 500);
+  // Never let one bad frame freeze the table: show the error instead.
+  setInterval(() => { try { render(); } catch (err) { $("status").textContent = "error: " + err.message; } }, 500);
   render();
 })();
