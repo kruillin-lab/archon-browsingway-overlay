@@ -250,10 +250,13 @@
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(1) + "k" : Math.round(n).toString());
 
+  // The game's "in combat" flag is not reliable enough to time a fight (it can stay on for ages),
+  // so the clock runs from the first hit to the last hit, plus a short grace while hits are fresh.
+  const GRACE_MS = 3000;     // keep counting up for this long after the last hit
+  const NEW_FIGHT_MS = 20000; // a hit after this much quiet starts a brand new fight
   function seconds() {
     if (fightStart === null) return 0;
-    // While the game says we are in combat, count up to now; otherwise stop at the last hit.
-    const end = inCombat ? lastSeen : lastHit || lastSeen;
+    const end = lastHit !== null && lastSeen - lastHit > GRACE_MS ? lastHit : lastSeen;
     return Math.max(3, (end - fightStart) / 1000); // never divide by less than 3s: the first hit would look huge
   }
 
@@ -293,9 +296,9 @@
       return;
     }
     // If we joined mid-fight (no combat message seen) or a new pull starts after a quiet gap,
-    // start the clock at the first hit instead of leaving it unset.
+    // start the clock at the first hit instead of leaving it unset. (Also splits pulls when the game's combat signal never drops.)
     const isHit = f[0] === "21" || f[0] === "22" || f[0] === "24";
-    if (isHit && lastHit !== null && lastSeen - lastHit > 30000) { parser.reset(); fightStart = null; }
+    if (isHit && lastHit !== null && lastSeen - lastHit > NEW_FIGHT_MS) { parser.reset(); fightStart = null; }
     const before = parser.hits;
     parser.ingest(f);
     if (parser.hits > before) {
