@@ -38,6 +38,8 @@
       this.status = new Map(); // targetId -> Map(statusId -> giverId)
       this.names = new Map(); // id -> name
       this.hits = 0;
+      // How many ability lines we saw and why some were not counted (shown in the overlay footer).
+      this.seen = { abilityLines: 0, notEnemy: 0, noDamage: 0, notPlayer: 0 };
     }
 
     reset() {
@@ -100,14 +102,15 @@
     _ability(f) {
       const source = f[2];
       const target = f[6];
+      this.seen.abilityLines++;
       // Count only damage to enemies (ids starting with 4). Players have ids starting with 1.
-      if (!target.startsWith("4")) return;
+      if (!target.startsWith("4")) { this.seen.notEnemy++; return; }
       const amount = damageOf(f);
-      if (amount <= 0) return;
+      if (amount <= 0) { this.seen.noDamage++; return; }
       // Pets and summons report their owner in field 47; their damage counts for the owner.
       const ownerId = f[47];
       const owner = ownerId && ownerId !== "E0000000" && ownerId !== "0" ? ownerId : source;
-      if (!owner.startsWith("1")) return; // not a player's damage
+      if (!owner.startsWith("1")) { this.seen.notPlayer++; return; } // not a player's damage
       this.names.set(source, f[3]);
       const mine = this.status.get(source) || this.status.get(owner);
       const active = [];
