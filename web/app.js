@@ -38,6 +38,7 @@
       rows.push({ id, name: parser.names.get(id) || id, ...m });
     }
     rows.sort((a, b) => b[sortKey] - a[sortKey]);
+    $("debug").textContent = `${parser.hits} hits, ${s.toFixed(0)}s`;
     $("head").innerHTML = `<th class="name">Player</th>` + cols.map(([k, label]) => `<th data-k="${k}" class="${k === sortKey ? "on" : ""}">${label}</th>`).join("");
     $("body").innerHTML = rows
       .map((r) => `<tr><td class="name">${r.name.replace(/</g, "&lt;")}</td>` + cols.map(([k]) => `<td class="${k === sortKey ? "on" : ""}">${fmt(r[k])}</td>`).join("") + "</tr>")
