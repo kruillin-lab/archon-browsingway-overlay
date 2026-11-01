@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>DPS overlay</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: transparent; }
+  .box { font: 13px/1.35 "Segoe UI", system-ui, sans-serif; color: #e8e8ee; background: rgba(15,16,22,.78); border-radius: 6px; padding: 6px 8px; min-width: 330px; }
+  .top { display: flex; justify-content: space-between; opacity: .8; font-size: 12px; margin-bottom: 3px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: right; padding: 1px 6px; font-variant-numeric: tabular-nums; }
+  th { font-weight: 600; opacity: .7; cursor: pointer; }
+  th.on, td.on { color: #ffd479; opacity: 1; }
+  .name { text-align: left; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tbody tr:nth-child(odd) { background: rgba(255,255,255,.04); }
+  #status { color: #ff9a9a; }
+</style></head>
+<body><div class="box">
+  <div class="top"><span id="timer">waiting for combat</span><span id="status"></span></div>
+  <table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table>
+  <div id="debug" style="opacity:.45;font-size:11px;text-align:right"></div>
+</div>
+<script>window.BUFF_TABLE = /*BUFFS*/;</script>
+<script>/*ENGINE*/</script>
+<script>/*PARSER*/</script>
+<script>/*APP*/</script>
+</body></html>

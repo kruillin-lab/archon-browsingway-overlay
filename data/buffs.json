@@ -1,0 +1,20 @@
+{
+  "_note": "statusId is the FFXIV status id (FFLogs shows it as 1000000 + statusId). 'verified' entries were confirmed against FFLogs data; 'unverified' ones are from memory and must be checked before use.",
+  "verified": [
+    {"statusId": 2703, "name": "Searing Light", "percent": 5, "scope": "party"},
+    {"statusId": 3685, "name": "Starry Muse",   "percent": 5, "scope": "party"},
+    {"statusId": 1878, "name": "Divination",    "percent": 6, "scope": "party"},
+    {"statusId": 3887, "name": "The Balance",   "percent": 6, "scope": "single"},
+    {"statusId": 3889, "name": "The Spear",     "percent": 6, "scope": "single"}
+  ],
+  "unverified": [
+    {"name": "Technical Finish", "percent": 5,  "scope": "party"},
+    {"name": "Brotherhood",      "percent": 5,  "scope": "party"},
+    {"name": "Embolden",         "percent": 5,  "scope": "party"},
+    {"name": "Standard Finish",  "percent": 5,  "scope": "single"},
+    {"name": "Chain Stratagem",  "kind": "crit_rate", "percent": 10, "scope": "party"},
+    {"name": "Battle Litany",    "kind": "crit_rate", "percent": 10, "scope": "party"},
+    {"name": "Devilment",        "kind": "crit_and_dh_rate", "percent": 20, "scope": "single"},
+    {"name": "Battle Voice",     "kind": "dh_rate", "percent": 20, "scope": "party"}
+  ]
+}
